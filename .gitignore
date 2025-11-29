@@ -1,0 +1,47 @@
+# ======================
+# Installer Files
+# ======================
+# ATG Installers
+atg/installers/*.bin
+atg/installers/*.zip
+atg/installers/*.tar.gz
+atg/installers/*.jar
+
+# Oracle DB Installers
+oracle-db/*.zip
+
+# Endeca Installers
+endeca/installers/*.bin
+endeca/installers/*.zip
+endeca/installers/*.tar.gz
+endeca/installers/*.sh
+
+# ======================
+# Build Artifacts
+# ======================
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+
+# ======================
+# OS Files
+# ======================
+.DS_Store
+Thumbs.db
+
+# ======================
+# IDE Files
+# ======================
+.idea/
+.vscode/
+*.iml
+.history/
+
+# ======================
+# Docker
+# ======================
+# Oracle data persistence (local only)
+oradata/
+
