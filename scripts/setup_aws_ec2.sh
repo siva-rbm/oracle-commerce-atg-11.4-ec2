@@ -3,7 +3,7 @@
 #############################################################
 # Oracle ATG 11.4 + JBoss EAP 7.4 + Oracle DB 12c           #
 # AWS EC2 Setup Script                                       #
-# Tested on: Amazon Linux 2, Ubuntu 20.04/22.04             #
+# Tested on: Amazon Linux 2023, Ubuntu 20.04/22.04          #
 #############################################################
 
 set -e
@@ -86,13 +86,12 @@ install_prerequisites() {
                 gnupg \
                 lsb-release
             ;;
-        amzn|rhel|centos|fedora)
-            sudo yum update -y
-            sudo yum install -y \
-                git \
-                unzip \
-                curl \
-                yum-utils
+        amzn)
+            # Amazon Linux 2023 uses dnf and has curl-minimal conflict
+            sudo dnf install -y git unzip yum-utils --allowerasing
+            ;;
+        rhel|centos|fedora)
+            sudo dnf install -y git unzip curl yum-utils
             ;;
         *)
             echo "⚠️ Unknown OS. Attempting to continue..."
@@ -132,7 +131,8 @@ install_docker() {
             sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
             ;;
         amzn)
-            sudo amazon-linux-extras install docker -y
+            # Amazon Linux 2023 uses dnf for Docker
+            sudo dnf install -y docker
             ;;
         rhel|centos|fedora)
             sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
@@ -444,4 +444,3 @@ main() {
 
 # Run main function
 main "$@"
-
