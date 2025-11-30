@@ -1,26 +1,24 @@
 #!/bin/bash
+#
+# install-oracle-19c.sh
+# Simplified & hardened Oracle 19c installer (supports Amazon Linux / RHEL / CentOS / Ubuntu)
+#
+#  - Uses Oracle's canonical path: /u01/app/oracle/product/19.0.0/dbhome_1
+#  - If you prefer /opt/oracle, script will create a symlink to /u01 location (non-destructive)
+#  - Expects LINUX.X64_193000_db_home.zip in ./oracle-db/
+#
+set -euo pipefail
 
-#############################################################
-# Oracle Database 19c Installation Script                   #
-# For Amazon Linux 2023 / RHEL 8+ / CentOS 8+              #
-# Much better compatibility than 12c!                       #
-#############################################################
-
-set -e
-
-# Get script directory and project root
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-
-echo "============================================="
-echo " Oracle Database 19c Installation           "
-echo "============================================="
-
-# -----------------------------
+##########################
 # Configuration
-# -----------------------------
-ORACLE_BASE="/opt/oracle"
-ORACLE_HOME="/opt/oracle/product/19c/dbhome_1"
+##########################
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
+INSTALLER_ZIP="${PROJECT_ROOT}/oracle-db/LINUX.X64_193000_db_home.zip"
+
+# Use Oracle's expected default path (recommended)
+ORACLE_BASE="/u01/app/oracle"
+ORACLE_HOME="${ORACLE_BASE}/product/19.0.0/dbhome_1"
 ORACLE_SID="ATGDB"
 ORACLE_PDB="ATGPDB"
 ORACLE_PWD="ATG_Admin123"
@@ -31,181 +29,131 @@ ORACLE_USER="oracle"
 ORACLE_GROUP="oinstall"
 DBA_GROUP="dba"
 
-# Oracle 19c installer - download from Oracle website
-# File: LINUX.X64_193000_db_home.zip (~2.9GB)
-INSTALLER_ZIP="${PROJECT_ROOT}/oracle-db/LINUX.X64_193000_db_home.zip"
+# Helper colours
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+print_status(){ echo -e "${GREEN}[OK]${NC} $1"; }
+print_warn(){ echo -e "${YELLOW}[WARN]${NC} $1"; }
+print_err(){ echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+##########################
+# Root check
+##########################
+if [ "$EUID" -ne 0 ]; then
+  print_err "Please run as root: sudo $0"
+  exit 1
+fi
 
-print_status() { echo -e "${GREEN}[OK]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+echo "Oracle 19c automated installer starting..."
+echo "Installer ZIP expected at: $INSTALLER_ZIP"
 
-# -----------------------------
-# Check if running as root
-# -----------------------------
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        print_error "Please run as root: sudo $0"
-        exit 1
-    fi
+##########################
+# Check installer
+##########################
+if [ ! -f "$INSTALLER_ZIP" ]; then
+  print_err "Installer not found: $INSTALLER_ZIP"
+  echo "Download LINUX.X64_193000_db_home.zip from Oracle and place it in: ${PROJECT_ROOT}/oracle-db/"
+  exit 1
+fi
+FILE_SIZE=$(stat -c%s "$INSTALLER_ZIP" 2>/dev/null || stat -f%z "$INSTALLER_ZIP" 2>/dev/null || echo 0)
+if [ "$FILE_SIZE" -lt 2500000000 ]; then
+  print_warn "Installer size suspicious ($(numfmt --to=iec $FILE_SIZE)). Expected ~2.9GB"
+fi
+print_status "Installer present."
+
+##########################
+# OS detection + prerequisites
+##########################
+if [ -f /etc/os-release ]; then
+  . /etc/os-release
+  OS_ID="$ID"
+else
+  OS_ID="unknown"
+fi
+
+echo "Detected OS: $OS_ID"
+
+install_packages_rhel() {
+  dnf install -y bc binutils elfutils-libelf elfutils-libelf-devel fontconfig-devel \
+    glibc glibc-devel glibc-headers gcc gcc-c++ ksh libaio libaio-devel libX11 \
+    libXau libXi libXtst libXrender libXrender-devel libgcc libstdc++ libstdc++-devel \
+    libnsl libnsl2 libxcrypt-compat make net-tools nfs-utils policycoreutils \
+    policycoreutils-python-utils smartmontools sysstat unzip which tar gzip numactl-libs || true
 }
 
-# -----------------------------
-# Check installer file
-# -----------------------------
-check_installer() {
-    echo ""
-    echo "[1/9] Checking Oracle 19c installer..."
-    
-    if [ ! -f "$INSTALLER_ZIP" ]; then
-        print_error "Oracle 19c installer not found: $INSTALLER_ZIP"
-        echo ""
-        echo "Please download Oracle Database 19c from:"
-        echo "  https://www.oracle.com/database/technologies/oracle19c-linux-downloads.html"
-        echo ""
-        echo "Download: LINUX.X64_193000_db_home.zip (~2.9GB)"
-        echo "Then copy it to: ${PROJECT_ROOT}/oracle-db/"
-        exit 1
-    fi
-    
-    FILE_SIZE=$(stat -c%s "$INSTALLER_ZIP" 2>/dev/null || stat -f%z "$INSTALLER_ZIP" 2>/dev/null)
-    if [ "$FILE_SIZE" -lt 2500000000 ]; then
-        print_warning "Installer file seems small ($(numfmt --to=iec $FILE_SIZE)). Expected ~2.9GB"
-    fi
-    
-    print_status "Oracle 19c installer found: $(basename $INSTALLER_ZIP)"
+install_packages_debian() {
+  apt-get update -y
+  apt-get install -y bc binutils libelf-dev build-essential ksh libaio1 libaio-dev \
+    unzip sysstat net-tools which tar gzip numactl
 }
 
-# -----------------------------
-# Install prerequisites
-# -----------------------------
-install_prerequisites() {
-    echo ""
-    echo "[2/9] Installing prerequisites..."
-    
-    # Detect OS
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        OS=$ID
-    fi
-    
-    case $OS in
-        amzn|rhel|centos|fedora|ol)
-            dnf install -y \
-                bc \
-                binutils \
-                elfutils-libelf \
-                elfutils-libelf-devel \
-                fontconfig-devel \
-                glibc \
-                glibc-devel \
-                glibc-headers \
-                gcc \
-                gcc-c++ \
-                ksh \
-                libaio \
-                libaio-devel \
-                libX11 \
-                libXau \
-                libXi \
-                libXtst \
-                libXrender \
-                libXrender-devel \
-                libgcc \
-                libstdc++ \
-                libstdc++-devel \
-                libnsl \
-                libnsl2 \
-                libxcrypt-compat \
-                make \
-                net-tools \
-                nfs-utils \
-                policycoreutils \
-                policycoreutils-python-utils \
-                smartmontools \
-                sysstat \
-                unzip \
-                --allowerasing 2>/dev/null || true
-            ;;
-        ubuntu|debian)
-            apt-get update
-            apt-get install -y \
-                bc binutils elfutils libelf-dev build-essential \
-                ksh libaio1 libaio-dev unzip sysstat net-tools
-            ;;
-    esac
-    
-    print_status "Prerequisites installed."
-}
+case "$OS_ID" in
+  rhel|centos|ol|amzn|fedora)
+    echo "[Prereqs] Installing packages for RHEL-family..."
+    install_packages_rhel
+    ;;
+  ubuntu|debian)
+    echo "[Prereqs] Installing packages for Debian-family..."
+    install_packages_debian
+    ;;
+  *)
+    print_warn "Unknown OS ($OS_ID). Please manually install Oracle prerequisites (libaio, ksh, gcc, etc.)"
+    ;;
+esac
+print_status "Prerequisites installed (or assumed present)."
 
-# -----------------------------
-# Create Oracle user and groups
-# -----------------------------
-create_oracle_user() {
-    echo ""
-    echo "[3/9] Creating Oracle user and groups..."
-    
-    # Create groups if they don't exist
-    getent group $ORACLE_GROUP > /dev/null 2>&1 || groupadd -g 54321 $ORACLE_GROUP
-    getent group $DBA_GROUP > /dev/null 2>&1 || groupadd -g 54322 $DBA_GROUP
-    getent group oper > /dev/null 2>&1 || groupadd -g 54323 oper
-    getent group backupdba > /dev/null 2>&1 || groupadd -g 54324 backupdba
-    getent group dgdba > /dev/null 2>&1 || groupadd -g 54325 dgdba
-    getent group kmdba > /dev/null 2>&1 || groupadd -g 54326 kmdba
-    getent group racdba > /dev/null 2>&1 || groupadd -g 54327 racdba
-    
-    # Create oracle user if doesn't exist
-    if ! id "$ORACLE_USER" &>/dev/null; then
-        useradd -u 54321 -g $ORACLE_GROUP \
-            -G $DBA_GROUP,oper,backupdba,dgdba,kmdba,racdba \
-            -d /home/$ORACLE_USER -m $ORACLE_USER
-        echo "oracle:oracle123" | chpasswd
-        print_status "Oracle user created (password: oracle123)"
-    else
-        print_status "Oracle user already exists."
-        usermod -a -G $DBA_GROUP,oper,backupdba,dgdba,kmdba,racdba $ORACLE_USER 2>/dev/null || true
-    fi
-}
+##########################
+# Create groups & user
+##########################
+getent group "$ORACLE_GROUP" >/dev/null 2>&1 || groupadd -g 54321 "$ORACLE_GROUP"
+getent group "$DBA_GROUP" >/dev/null 2>&1 || groupadd -g 54322 "$DBA_GROUP"
 
-# -----------------------------
-# Create directory structure
-# -----------------------------
-create_directories() {
-    echo ""
-    echo "[4/9] Creating Oracle directories..."
-    
-    mkdir -p $ORACLE_HOME
-    mkdir -p $ORACLE_BASE/oradata
-    mkdir -p $ORACLE_BASE/oraInventory
-    mkdir -p $ORACLE_BASE/scripts
-    mkdir -p $ORACLE_BASE/recovery_area
-    
-    chown -R $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE
-    chmod -R 775 $ORACLE_BASE
-    
-    print_status "Directories created."
-}
+# create other standard groups used by Oracle
+for g in oper backupdba dgdba kmdba racdba; do
+  getent group "$g" >/dev/null 2>&1 || groupadd -g $((54322 + ${RANDOM:0:2} )) "$g" || true
+done
 
-# -----------------------------
-# Configure kernel parameters
-# -----------------------------
-configure_kernel() {
-    echo ""
-    echo "[5/9] Configuring kernel parameters..."
-    
-    # Backup existing sysctl.conf
-    cp /etc/sysctl.conf /etc/sysctl.conf.bak 2>/dev/null || true
-    
-    # Add Oracle kernel parameters if not already present
-    if ! grep -q "# Oracle 19c" /etc/sysctl.conf; then
-        cat >> /etc/sysctl.conf << 'EOF'
+if ! id "$ORACLE_USER" >/dev/null 2>&1; then
+  useradd -u 54321 -g "$ORACLE_GROUP" -G "$DBA_GROUP",oper,backupdba,dgdba,kmdba,racdba -d "/home/$ORACLE_USER" -m "$ORACLE_USER"
+  echo "oracle:oracle123" | chpasswd || true
+  print_status "Created user $ORACLE_USER (password oracle123). Change password after install!"
+else
+  print_status "User $ORACLE_USER already exists."
+  usermod -a -G "$DBA_GROUP",oper,backupdba,dgdba,kmdba,racdba "$ORACLE_USER" || true
+fi
 
-# Oracle 19c Kernel Parameters
+##########################
+# Create directory layout (canonical /u01)
+##########################
+echo "[Dirs] Creating $ORACLE_BASE and children..."
+mkdir -p "$ORACLE_HOME"
+mkdir -p "$ORACLE_BASE/oradata"
+mkdir -p "$ORACLE_BASE/oraInventory"
+mkdir -p "$ORACLE_BASE/scripts"
+mkdir -p "$ORACLE_BASE/recovery_area"
+chown -R "$ORACLE_USER:$ORACLE_GROUP" "$(dirname "$ORACLE_BASE")" || chown -R "$ORACLE_USER:$ORACLE_GROUP" "$ORACLE_BASE" || true
+chmod -R 775 "$ORACLE_BASE" || true
+print_status "Directories created."
+
+##########################
+# If you previously used /opt/oracle, create symlink to canonical path
+##########################
+if [ -d "/opt/oracle" ] && [ ! -L "/u01/app/oracle" ]; then
+  print_warn "/opt/oracle exists. Creating symlink /u01/app/oracle -> /opt/oracle (non-destructive)."
+  mkdir -p /u01/app
+  ln -sfn /opt/oracle /u01/app/oracle
+  chown -h "$ORACLE_USER:$ORACLE_GROUP" /u01/app/oracle || true
+  print_status "Symlink created: /u01/app/oracle -> /opt/oracle"
+fi
+
+##########################
+# Kernel / limits - append safely
+##########################
+echo "[Kernel] Applying safe kernel & limits (appending markers)"
+SYSCTL_MARKER="# Oracle 19c - managed by install-oracle-19c.sh"
+if ! grep -q "$SYSCTL_MARKER" /etc/sysctl.conf 2>/dev/null; then
+  cat >> /etc/sysctl.conf <<EOF
+
+$SYSCTL_MARKER
 fs.aio-max-nr = 1048576
 fs.file-max = 6815744
 kernel.shmall = 2097152
@@ -218,16 +166,14 @@ net.core.rmem_max = 4194304
 net.core.wmem_default = 262144
 net.core.wmem_max = 1048576
 EOF
-    fi
-    
-    # Apply kernel parameters
-    sysctl -p 2>/dev/null || true
-    
-    # Configure limits for oracle user
-    if ! grep -q "# Oracle 19c Limits" /etc/security/limits.conf; then
-        cat >> /etc/security/limits.conf << 'EOF'
+  sysctl -p >/dev/null 2>&1 || true
+fi
 
-# Oracle 19c Limits
+LIMITS_MARKER="# Oracle 19c Limits - managed by install-oracle-19c.sh"
+if ! grep -q "$LIMITS_MARKER" /etc/security/limits.conf 2>/dev/null; then
+  cat >> /etc/security/limits.conf <<EOF
+
+$LIMITS_MARKER
 oracle soft nproc 2047
 oracle hard nproc 16384
 oracle soft nofile 1024
@@ -237,77 +183,58 @@ oracle hard stack 32768
 oracle soft memlock unlimited
 oracle hard memlock unlimited
 EOF
-    fi
-    
-    print_status "Kernel parameters configured."
-}
+fi
+print_status "Kernel parameters and limits updated (if not present)."
 
-# -----------------------------
-# Setup Oracle environment
-# -----------------------------
-setup_environment() {
-    echo ""
-    echo "[6/9] Setting up Oracle environment..."
-    
-    # Create oracle user profile
-    cat > /home/$ORACLE_USER/.bash_profile << EOF
-# Oracle 19c Environment
+##########################
+# Environment setup
+##########################
+cat > "/home/$ORACLE_USER/.bash_profile" <<EOF
+# Oracle 19c Environment (auto-created)
 export ORACLE_BASE=$ORACLE_BASE
 export ORACLE_HOME=$ORACLE_HOME
 export ORACLE_SID=$ORACLE_SID
 export PATH=\$ORACLE_HOME/bin:\$PATH
 export LD_LIBRARY_PATH=\$ORACLE_HOME/lib:/lib:/usr/lib:\$LD_LIBRARY_PATH
 export CLASSPATH=\$ORACLE_HOME/jlib:\$ORACLE_HOME/rdbms/jlib
-export NLS_LANG=AMERICAN_AMERICA.${ORACLE_CHARACTERSET}
+export NLS_LANG=AMERICAN_AMERICA.$ORACLE_CHARACTERSET
 export TNS_ADMIN=\$ORACLE_HOME/network/admin
-
-# Aliases
-alias sqlplus='rlwrap sqlplus'
-alias rman='rlwrap rman'
+alias sqlplus='rlwrap sqlplus' 2>/dev/null || true
+alias rman='rlwrap rman' 2>/dev/null || true
 EOF
+chown "$ORACLE_USER:$ORACLE_GROUP" "/home/$ORACLE_USER/.bash_profile" || true
 
-    chown $ORACLE_USER:$ORACLE_GROUP /home/$ORACLE_USER/.bash_profile
-    
-    # Create system-wide profile
-    cat > /etc/profile.d/oracle.sh << EOF
+cat > /etc/profile.d/oracle.sh <<EOF
 export ORACLE_BASE=$ORACLE_BASE
 export ORACLE_HOME=$ORACLE_HOME
 export ORACLE_SID=$ORACLE_SID
 export PATH=\$ORACLE_HOME/bin:\$PATH
 EOF
+chmod 644 /etc/profile.d/oracle.sh || true
 
-    # Create oraInst.loc
-    cat > /etc/oraInst.loc << EOF
+cat > /etc/oraInst.loc <<EOF
 inventory_loc=$ORACLE_BASE/oraInventory
 inst_group=$ORACLE_GROUP
 EOF
-    chmod 644 /etc/oraInst.loc
+chmod 644 /etc/oraInst.loc || true
 
-    print_status "Oracle environment configured."
-}
+print_status "Environment and oraInst.loc configured."
 
-# -----------------------------
-# Extract and install Oracle 19c
-# -----------------------------
-install_oracle() {
-    echo ""
-    echo "[7/9] Installing Oracle Database 19c..."
-    echo "This may take 15-30 minutes..."
-    
-    # Check if already installed
-    if [ -f "$ORACLE_HOME/bin/sqlplus" ]; then
-        print_status "Oracle already installed at $ORACLE_HOME"
-        return 0
-    fi
-    
-    # Oracle 19c installs differently - extract directly to ORACLE_HOME
-    echo "Extracting Oracle 19c installer to ORACLE_HOME..."
-    cd $ORACLE_HOME
-    unzip -oq "$INSTALLER_ZIP"
-    chown -R $ORACLE_USER:$ORACLE_GROUP $ORACLE_HOME
-    
-    # Create response file for Oracle 19c
-    cat > $ORACLE_BASE/db_install.rsp << EOF
+##########################
+# Extract installer to ORACLE_HOME
+##########################
+echo "[Install] Extracting installer to $ORACLE_HOME (this may take a while)..."
+# ensure ownership and permissions
+chown -R "$ORACLE_USER:$ORACLE_GROUP" "$ORACLE_HOME" || true
+# Unzip into ORACLE_HOME
+unzip -oq "$INSTALLER_ZIP" -d "$ORACLE_HOME"
+chown -R "$ORACLE_USER:$ORACLE_GROUP" "$ORACLE_HOME"
+print_status "Installer extracted."
+
+##########################
+# Create response file and installer runner
+##########################
+cat > "$ORACLE_BASE/db_install.rsp" <<EOF
 oracle.install.responseFileVersion=/oracle/install/rspfmt_dbinstall_response_schema_v19.0.0
 oracle.install.option=INSTALL_DB_SWONLY
 UNIX_GROUP_NAME=$ORACLE_GROUP
@@ -325,100 +252,80 @@ oracle.install.db.rootconfig.executeRootScript=false
 SECURITY_UPDATES_VIA_MYORACLESUPPORT=false
 DECLINE_SECURITY_UPDATES=true
 EOF
+chown "$ORACLE_USER:$ORACLE_GROUP" "$ORACLE_BASE/db_install.rsp" || true
 
-    chown $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/db_install.rsp
-    
-    # Create installer script
-    cat > $ORACLE_BASE/scripts/run_installer.sh << 'INSTALLER_SCRIPT'
+cat > "$ORACLE_BASE/scripts/run_installer.sh" <<'INSTALLER_SCRIPT'
 #!/bin/bash
-export ORACLE_BASE=/opt/oracle
-export ORACLE_HOME=/opt/oracle/product/19c/dbhome_1
+export ORACLE_BASE=/u01/app/oracle
+export ORACLE_HOME=/u01/app/oracle/product/19.0.0/dbhome_1
 export CV_ASSUME_DISTID=OEL8.1
 export PATH=$ORACLE_HOME/bin:$PATH
 
-cd $ORACLE_HOME
+cd "$ORACLE_HOME"
+# run the runInstaller in silent mode; ignore prereq failures if any
 ./runInstaller -silent \
-    -responseFile /opt/oracle/db_install.rsp \
+    -responseFile /u01/app/oracle/db_install.rsp \
     -ignorePrereqFailure \
-    -waitforcompletion
+    -waitforcompletion || true
 INSTALLER_SCRIPT
+chmod +x "$ORACLE_BASE/scripts/run_installer.sh"
+chown "$ORACLE_USER:$ORACLE_GROUP" "$ORACLE_BASE/scripts/run_installer.sh"
 
-    chmod +x $ORACLE_BASE/scripts/run_installer.sh
-    chown $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/scripts/run_installer.sh
-    
-    # Run installer as oracle user
-    echo "Running Oracle 19c installer (silent mode)..."
-    sudo -u $ORACLE_USER $ORACLE_BASE/scripts/run_installer.sh || true
-    
-    # Run root scripts
-    echo "Running root scripts..."
-    if [ -f "$ORACLE_BASE/oraInventory/orainstRoot.sh" ]; then
-        $ORACLE_BASE/oraInventory/orainstRoot.sh
-    fi
-    if [ -f "$ORACLE_HOME/root.sh" ]; then
-        $ORACLE_HOME/root.sh
-    fi
-    
-    print_status "Oracle Database 19c software installed."
-}
+echo "[Install] Running Oracle installer as $ORACLE_USER (silent). This may take 10-40 minutes."
+# run as oracle user
+sudo -u "$ORACLE_USER" bash -lc "$ORACLE_BASE/scripts/run_installer.sh" || true
 
-# -----------------------------
-# Create database
-# -----------------------------
-create_database() {
-    echo ""
-    echo "[8/9] Creating Oracle Database..."
-    echo "This may take 15-30 minutes..."
-    
-    # Check if database already exists
-    if [ -d "$ORACLE_BASE/oradata/$ORACLE_SID" ]; then
-        print_status "Database $ORACLE_SID already exists."
-        return 0
-    fi
-    
-    # Create database script
-    cat > $ORACLE_BASE/scripts/create_db.sh << 'DBSCRIPT'
+# After runInstaller completes, some root scripts need to be run. The installer usually indicates their paths.
+# Common locations:
+if [ -f "$ORACLE_BASE/oraInventory/orainstRoot.sh" ]; then
+  echo "[Install] Running orainstRoot.sh"
+  "$ORACLE_BASE/oraInventory/orainstRoot.sh" || true
+fi
+if [ -f "$ORACLE_HOME/root.sh" ]; then
+  echo "[Install] Running $ORACLE_HOME/root.sh"
+  "$ORACLE_HOME/root.sh" || true
+fi
+print_status "Oracle software installed (or runInstaller completed)."
+
+##########################
+# Create DBCA create script and run it as oracle user
+##########################
+cat > "$ORACLE_BASE/scripts/create_db.sh" <<'DBSCRIPT'
 #!/bin/bash
-export ORACLE_BASE=/opt/oracle
-export ORACLE_HOME=/opt/oracle/product/19c/dbhome_1
+export ORACLE_BASE=/u01/app/oracle
+export ORACLE_HOME=/u01/app/oracle/product/19.0.0/dbhome_1
 export ORACLE_SID=ATGDB
 export PATH=$ORACLE_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$ORACLE_HOME/lib:$LD_LIBRARY_PATH
 
+# Create a non-CDB (match your original intention). If you want a CDB, change -createAsContainerDatabase true and add PDB params.
 dbca -silent -createDatabase \
     -templateName General_Purpose.dbc \
     -gdbName ATGDB \
     -sid ATGDB \
     -createAsContainerDatabase false \
     -emConfiguration NONE \
-    -datafileDestination /opt/oracle/oradata \
-    -recoveryAreaDestination /opt/oracle/recovery_area \
+    -datafileDestination /u01/app/oracle/oradata \
+    -recoveryAreaDestination /u01/app/oracle/recovery_area \
     -storageType FS \
     -characterSet AL32UTF8 \
     -totalMemory 2048 \
     -sysPassword ATG_Admin123 \
-    -systemPassword ATG_Admin123
+    -systemPassword ATG_Admin123 || exit 1
 DBSCRIPT
 
-    chmod +x $ORACLE_BASE/scripts/create_db.sh
-    chown $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/scripts/create_db.sh
-    
-    # Run database creation as oracle user
-    sudo -u $ORACLE_USER $ORACLE_BASE/scripts/create_db.sh
-    
-    print_status "Database $ORACLE_SID created."
-}
+chmod +x "$ORACLE_BASE/scripts/create_db.sh"
+chown "$ORACLE_USER:$ORACLE_GROUP" "$ORACLE_BASE/scripts/create_db.sh"
 
-# -----------------------------
-# Configure and start listener
-# -----------------------------
-configure_listener() {
-    echo ""
-    echo "[9/9] Configuring Oracle Listener..."
-    
-    # Create listener.ora
-    mkdir -p $ORACLE_HOME/network/admin
-    cat > $ORACLE_HOME/network/admin/listener.ora << EOF
+echo "[DBCA] Creating database (dbca). This may take 10-30 minutes..."
+sudo -u "$ORACLE_USER" bash -lc "$ORACLE_BASE/scripts/create_db.sh"
+print_status "Database creation step finished."
+
+##########################
+# Listener (tns) setup
+##########################
+mkdir -p "$ORACLE_HOME/network/admin"
+cat > "$ORACLE_HOME/network/admin/listener.ora" <<EOF
 LISTENER =
   (DESCRIPTION_LIST =
     (DESCRIPTION =
@@ -438,8 +345,7 @@ SID_LIST_LISTENER =
 ADR_BASE_LISTENER = $ORACLE_BASE
 EOF
 
-    # Create tnsnames.ora
-    cat > $ORACLE_HOME/network/admin/tnsnames.ora << EOF
+cat > "$ORACLE_HOME/network/admin/tnsnames.ora" <<EOF
 $ORACLE_SID =
   (DESCRIPTION =
     (ADDRESS = (PROTOCOL = TCP)(HOST = localhost)(PORT = 1521))
@@ -453,169 +359,119 @@ LISTENER_$ORACLE_SID =
   (ADDRESS = (PROTOCOL = TCP)(HOST = localhost)(PORT = 1521))
 EOF
 
-    chown -R $ORACLE_USER:$ORACLE_GROUP $ORACLE_HOME/network/admin/
-    
-    # Create listener start script
-    cat > $ORACLE_BASE/scripts/start_listener.sh << 'LSNR_SCRIPT'
+chown -R "$ORACLE_USER:$ORACLE_GROUP" "$ORACLE_HOME/network/admin"
+print_status "Listener and tnsnames configured."
+
+# Listener start script
+cat > "$ORACLE_BASE/scripts/start_listener.sh" <<'LSNR_SCRIPT'
 #!/bin/bash
-export ORACLE_HOME=/opt/oracle/product/19c/dbhome_1
+export ORACLE_HOME=/u01/app/oracle/product/19.0.0/dbhome_1
 export PATH=$ORACLE_HOME/bin:$PATH
-lsnrctl stop 2>/dev/null || true
+lsnrctl stop || true
 lsnrctl start
 LSNR_SCRIPT
+chmod +x "$ORACLE_BASE/scripts/start_listener.sh"
+chown "$ORACLE_USER:$ORACLE_GROUP" "$ORACLE_BASE/scripts/start_listener.sh"
+sudo -u "$ORACLE_USER" bash -lc "$ORACLE_BASE/scripts/start_listener.sh" || true
+print_status "Listener started (if possible)."
 
-    chmod +x $ORACLE_BASE/scripts/start_listener.sh
-    chown $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/scripts/start_listener.sh
-    
-    # Start listener
-    sudo -u $ORACLE_USER $ORACLE_BASE/scripts/start_listener.sh
-    
-    print_status "Listener configured and started."
-}
-
-# -----------------------------
-# Create startup/shutdown scripts
-# -----------------------------
-create_service_scripts() {
-    echo ""
-    echo "Creating service scripts..."
-    
-    # Startup script
-    cat > $ORACLE_BASE/scripts/start_db.sh << 'EOF'
+##########################
+# Startup / Shutdown scripts
+##########################
+cat > "$ORACLE_BASE/scripts/start_db.sh" <<'STARTDB'
 #!/bin/bash
-export ORACLE_BASE=/opt/oracle
-export ORACLE_HOME=/opt/oracle/product/19c/dbhome_1
+export ORACLE_BASE=/u01/app/oracle
+export ORACLE_HOME=/u01/app/oracle/product/19.0.0/dbhome_1
 export ORACLE_SID=ATGDB
 export PATH=$ORACLE_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$ORACLE_HOME/lib:$LD_LIBRARY_PATH
 
-echo "Starting Oracle Listener..."
-lsnrctl start
+echo "Starting Listener..."
+lsnrctl start || true
 
-echo "Starting Oracle Database..."
-sqlplus / as sysdba << SQL
+echo "Starting Database..."
+sqlplus / as sysdba <<SQL
 startup
 exit
 SQL
+echo "Database start requested."
+STARTDB
 
-echo "Oracle Database started."
-EOF
-
-    # Shutdown script
-    cat > $ORACLE_BASE/scripts/stop_db.sh << 'EOF'
+cat > "$ORACLE_BASE/scripts/stop_db.sh" <<'STOPDB'
 #!/bin/bash
-export ORACLE_BASE=/opt/oracle
-export ORACLE_HOME=/opt/oracle/product/19c/dbhome_1
+export ORACLE_BASE=/u01/app/oracle
+export ORACLE_HOME=/u01/app/oracle/product/19.0.0/dbhome_1
 export ORACLE_SID=ATGDB
 export PATH=$ORACLE_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$ORACLE_HOME/lib:$LD_LIBRARY_PATH
 
-echo "Stopping Oracle Database..."
-sqlplus / as sysdba << SQL
+echo "Stopping Database..."
+sqlplus / as sysdba <<SQL
 shutdown immediate
 exit
 SQL
 
-echo "Stopping Oracle Listener..."
-lsnrctl stop
+echo "Stopping Listener..."
+lsnrctl stop || true
+STOPDB
 
-echo "Oracle Database stopped."
-EOF
+chmod +x "$ORACLE_BASE/scripts/"*.sh
+chown -R "$ORACLE_USER:$ORACLE_GROUP" "$ORACLE_BASE/scripts"
 
-    chmod +x $ORACLE_BASE/scripts/*.sh
-    chown -R $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/scripts/
-    
-    print_status "Service scripts created."
-}
-
-# -----------------------------
-# Create systemd service
-# -----------------------------
-create_systemd_service() {
-    echo ""
-    echo "Creating systemd service..."
-    
-    cat > /etc/systemd/system/oracle.service << 'EOF'
+##########################
+# systemd service
+##########################
+cat > /etc/systemd/system/oracle.service <<EOF
 [Unit]
 Description=Oracle Database 19c
 After=network.target
 
 [Service]
 Type=forking
-User=oracle
-Group=oinstall
-Environment="ORACLE_BASE=/opt/oracle"
-Environment="ORACLE_HOME=/opt/oracle/product/19c/dbhome_1"
-Environment="ORACLE_SID=ATGDB"
-
-ExecStart=/opt/oracle/scripts/start_db.sh
-ExecStop=/opt/oracle/scripts/stop_db.sh
+User=$ORACLE_USER
+Group=$ORACLE_GROUP
+Environment="ORACLE_BASE=$ORACLE_BASE"
+Environment="ORACLE_HOME=$ORACLE_HOME"
+Environment="ORACLE_SID=$ORACLE_SID"
+ExecStart=$ORACLE_BASE/scripts/start_db.sh
+ExecStop=$ORACLE_BASE/scripts/stop_db.sh
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload
-    systemctl enable oracle.service
-    
-    print_status "Systemd service created and enabled."
-}
+systemctl daemon-reload
+systemctl enable oracle.service || true
+print_status "systemd service created and enabled."
 
-# -----------------------------
-# Print summary
-# -----------------------------
-print_summary() {
-    echo ""
-    echo "============================================="
-    echo " ORACLE 19c INSTALLATION COMPLETE!          "
-    echo "============================================="
-    echo ""
-    echo "┌─────────────────────────────────────────────┐"
-    echo "│ Oracle Database Details                     │"
-    echo "├─────────────────────────────────────────────┤"
-    echo "│ ORACLE_BASE: $ORACLE_BASE"
-    echo "│ ORACLE_HOME: $ORACLE_HOME"
-    echo "│ ORACLE_SID:  $ORACLE_SID"
-    echo "│ Port:        1521"
-    echo "│ SYS Password: $ORACLE_PWD"
-    echo "└─────────────────────────────────────────────┘"
-    echo ""
-    echo "JDBC URL: jdbc:oracle:thin:@localhost:1521:$ORACLE_SID"
-    echo ""
-    echo "Commands:"
-    echo "  Start DB:    sudo systemctl start oracle"
-    echo "  Stop DB:     sudo systemctl stop oracle"
-    echo "  Status:      sudo systemctl status oracle"
-    echo "  SQL*Plus:    sudo -u oracle -i sqlplus / as sysdba"
-    echo ""
-    echo "Manual start/stop:"
-    echo "  Start DB:   sudo -u oracle $ORACLE_BASE/scripts/start_db.sh"
-    echo "  Stop DB:    sudo -u oracle $ORACLE_BASE/scripts/stop_db.sh"
-    echo ""
-    echo "Test connection:"
-    echo "  sudo -u oracle -i sqlplus sys/$ORACLE_PWD@localhost:1521/$ORACLE_SID as sysdba"
-    echo ""
-}
+##########################
+# Summary
+##########################
+cat <<EOF
 
-# -----------------------------
-# Main Execution
-# -----------------------------
-main() {
-    check_root
-    check_installer
-    install_prerequisites
-    create_oracle_user
-    create_directories
-    configure_kernel
-    setup_environment
-    install_oracle
-    create_database
-    configure_listener
-    create_service_scripts
-    create_systemd_service
-    print_summary
-}
+=============================================
+ ORACLE 19c INSTALL SCRIPT FINISHED (ATTEMPT)
+=============================================
+ORACLE_BASE: $ORACLE_BASE
+ORACLE_HOME: $ORACLE_HOME
+ORACLE_SID:  $ORACLE_SID
+SYS Password: $ORACLE_PWD
+JDBC URL: jdbc:oracle:thin:@localhost:1521:$ORACLE_SID
 
-# Run main function
-main "$@"
+To start:
+  sudo systemctl start oracle
+  sudo journalctl -u oracle -f
 
+Manual start:
+  sudo -u $ORACLE_USER $ORACLE_BASE/scripts/start_db.sh
+
+Notes:
+ - You MUST place LINUX.X64_193000_db_home.zip into ${PROJECT_ROOT}/oracle-db/ before running.
+ - If installer still references /u01 hard-coded paths, symlink /opt/oracle -> /u01/app/oracle or vice-versa as needed.
+ - For RHEL/CentOS, consider installing oracle-database-preinstall-* RPM for groups/limits (optional).
+ - Installer may still require manual root script execution; check runInstaller output for script paths.
+
+EOF
+
+exit 0
