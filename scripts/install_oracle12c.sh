@@ -317,22 +317,26 @@ EOF
     chown $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/db_install.rsp
     
     # Fix for "no oraInstaller in java.library.path" on newer Linux
-    # Set proper library path for the installer's native libraries
-    INSTALLER_LIB_PATH="$ORACLE_BASE/database/install/.oui/lib/linux64"
+    # Create installer script with proper environment
+    cat > $ORACLE_BASE/run_installer.sh << 'INSTALLER_SCRIPT'
+#!/bin/bash
+export ORACLE_BASE=/opt/oracle
+export ORACLE_HOME=/opt/oracle/product/12.2.0.1/dbhome_1
+export CV_ASSUME_DISTID=OEL7.9
+export LD_LIBRARY_PATH=/opt/oracle/database/install/.oui/lib/linux64:$LD_LIBRARY_PATH
+cd /opt/oracle/database
+./runInstaller -silent \
+    -responseFile /opt/oracle/db_install.rsp \
+    -ignorePrereqFailure \
+    -waitforcompletion
+INSTALLER_SCRIPT
+
+    chmod +x $ORACLE_BASE/run_installer.sh
+    chown $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/run_installer.sh
     
-    # Run installer as oracle user with proper environment
+    # Run installer as oracle user
     echo "Running Oracle installer (silent mode)..."
-    sudo -u $ORACLE_USER -i bash -c "
-        export ORACLE_BASE=$ORACLE_BASE
-        export ORACLE_HOME=$ORACLE_HOME
-        export CV_ASSUME_DISTID=OEL7.9
-        export LD_LIBRARY_PATH=$INSTALLER_LIB_PATH:\$LD_LIBRARY_PATH
-        cd $ORACLE_BASE/database
-        ./runInstaller -silent \
-            -responseFile $ORACLE_BASE/db_install.rsp \
-            -ignorePrereqFailure \
-            -waitforcompletion
-    "
+    sudo -u $ORACLE_USER $ORACLE_BASE/run_installer.sh
     
     # Run root scripts
     echo "Running root scripts..."
