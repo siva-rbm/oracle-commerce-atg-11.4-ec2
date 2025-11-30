@@ -293,7 +293,7 @@ install_oracle() {
     # Fix ownership for oracle user
     chown -R $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/database
     
-    # Create response file
+    # Create response file (Oracle 12.2.0.1 format)
     cat > $ORACLE_BASE/db_install.rsp << EOF
 oracle.install.responseFileVersion=/oracle/install/rspfmt_dbinstall_response_schema_v12.2.0
 oracle.install.option=INSTALL_DB_SWONLY
@@ -302,16 +302,13 @@ INVENTORY_LOCATION=$ORACLE_BASE/oraInventory
 ORACLE_HOME=$ORACLE_HOME
 ORACLE_BASE=$ORACLE_BASE
 oracle.install.db.InstallEdition=EE
-oracle.install.db.OSDBA_GROUP=$DBA_GROUP
-oracle.install.db.OSOPER_GROUP=$DBA_GROUP
-oracle.install.db.OSBACKUPDBA_GROUP=$DBA_GROUP
-oracle.install.db.OSDGDBA_GROUP=$DBA_GROUP
-oracle.install.db.OSKMDBA_GROUP=$DBA_GROUP
-oracle.install.db.OSRACDBA_GROUP=$DBA_GROUP
-oracle.install.db.rootconfig.executeRootScript=false
-oracle.install.db.ConfigureAsContainerDB=false
-SECURITY_UPDATES_VIA_MYORACLESUPPORT=false
+oracle.install.db.DBA_GROUP=$DBA_GROUP
+oracle.install.db.OPER_GROUP=$DBA_GROUP
+oracle.install.db.BACKUPDBA_GROUP=$DBA_GROUP
+oracle.install.db.DGDBA_GROUP=$DBA_GROUP
+oracle.install.db.KMDBA_GROUP=$DBA_GROUP
 DECLINE_SECURITY_UPDATES=true
+SECURITY_UPDATES_VIA_MYORACLESUPPORT=false
 EOF
 
     chown $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/db_install.rsp
