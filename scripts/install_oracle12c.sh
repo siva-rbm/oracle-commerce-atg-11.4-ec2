@@ -362,27 +362,34 @@ create_database() {
         return 0
     fi
     
-    # Create database using DBCA
-    sudo -u $ORACLE_USER -i bash -c "
-        export ORACLE_BASE=$ORACLE_BASE
-        export ORACLE_HOME=$ORACLE_HOME
-        export ORACLE_SID=$ORACLE_SID
-        export PATH=\$ORACLE_HOME/bin:\$PATH
-        
-        dbca -silent -createDatabase \
-            -templateName General_Purpose.dbc \
-            -gdbName $ORACLE_SID \
-            -sid $ORACLE_SID \
-            -createAsContainerDatabase false \
-            -emConfiguration NONE \
-            -datafileDestination $ORACLE_BASE/oradata \
-            -recoveryAreaDestination $ORACLE_BASE/recovery_area \
-            -storageType FS \
-            -characterSet $ORACLE_CHARACTERSET \
-            -totalMemory $ORACLE_MEMORY \
-            -sysPassword $ORACLE_PWD \
-            -systemPassword $ORACLE_PWD
-    "
+    # Create database script
+    cat > $ORACLE_BASE/scripts/create_db.sh << 'DBSCRIPT'
+#!/bin/bash
+export ORACLE_BASE=/opt/oracle
+export ORACLE_HOME=/opt/oracle/product/12.2.0.1/dbhome_1
+export ORACLE_SID=ATGDB
+export PATH=$ORACLE_HOME/bin:$PATH
+
+dbca -silent -createDatabase \
+    -templateName General_Purpose.dbc \
+    -gdbName ATGDB \
+    -sid ATGDB \
+    -createAsContainerDatabase false \
+    -emConfiguration NONE \
+    -datafileDestination /opt/oracle/oradata \
+    -recoveryAreaDestination /opt/oracle/recovery_area \
+    -storageType FS \
+    -characterSet AL32UTF8 \
+    -totalMemory 2048 \
+    -sysPassword ATG_Admin123 \
+    -systemPassword ATG_Admin123
+DBSCRIPT
+
+    chmod +x $ORACLE_BASE/scripts/create_db.sh
+    chown $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/scripts/create_db.sh
+    
+    # Run database creation as oracle user
+    sudo -u $ORACLE_USER $ORACLE_BASE/scripts/create_db.sh
     
     print_status "Database $ORACLE_SID created."
 }
@@ -432,13 +439,20 @@ EOF
 
     chown -R $ORACLE_USER:$ORACLE_GROUP $ORACLE_HOME/network/admin/
     
+    # Create listener start script
+    cat > $ORACLE_BASE/scripts/start_listener.sh << 'LSNR_SCRIPT'
+#!/bin/bash
+export ORACLE_HOME=/opt/oracle/product/12.2.0.1/dbhome_1
+export PATH=$ORACLE_HOME/bin:$PATH
+lsnrctl stop 2>/dev/null || true
+lsnrctl start
+LSNR_SCRIPT
+
+    chmod +x $ORACLE_BASE/scripts/start_listener.sh
+    chown $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/scripts/start_listener.sh
+    
     # Start listener
-    sudo -u $ORACLE_USER -i bash -c "
-        export ORACLE_HOME=$ORACLE_HOME
-        export PATH=\$ORACLE_HOME/bin:\$PATH
-        lsnrctl stop 2>/dev/null || true
-        lsnrctl start
-    "
+    sudo -u $ORACLE_USER $ORACLE_BASE/scripts/start_listener.sh
     
     print_status "Listener configured and started."
 }
