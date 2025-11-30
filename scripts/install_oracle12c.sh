@@ -281,7 +281,10 @@ install_oracle() {
     # Extract installer
     echo "Extracting Oracle installer..."
     cd $ORACLE_BASE
-    sudo -u $ORACLE_USER unzip -q -o "$INSTALLER_ZIP" -d $ORACLE_BASE/
+    # Run unzip as root (in case installer is in a user directory with restricted access)
+    unzip -q -o "$INSTALLER_ZIP" -d $ORACLE_BASE/
+    # Fix ownership for oracle user
+    chown -R $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/database
     
     # Create response file
     cat > $ORACLE_BASE/db_install.rsp << EOF
