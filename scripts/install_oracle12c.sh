@@ -97,6 +97,9 @@ install_prerequisites() {
                 fontconfig-devel \
                 glibc \
                 glibc-devel \
+                glibc-headers \
+                gcc \
+                gcc-c++ \
                 ksh \
                 libaio \
                 libaio-devel \
@@ -109,6 +112,7 @@ install_prerequisites() {
                 libgcc \
                 libstdc++ \
                 libstdc++-devel \
+                libnsl \
                 make \
                 net-tools \
                 smartmontools \
@@ -116,19 +120,22 @@ install_prerequisites() {
                 unzip \
                 xorg-x11-utils \
                 xorg-x11-xauth \
+                java-1.8.0-amazon-corretto-devel \
                 --allowerasing 2>/dev/null || \
             yum install -y \
                 bc binutils elfutils-libelf elfutils-libelf-devel \
-                fontconfig-devel glibc glibc-devel ksh libaio libaio-devel \
+                fontconfig-devel glibc glibc-devel glibc-headers gcc gcc-c++ \
+                ksh libaio libaio-devel \
                 libX11 libXau libXi libXtst libXrender libXrender-devel \
-                libgcc libstdc++ libstdc++-devel make net-tools \
-                smartmontools sysstat unzip
+                libgcc libstdc++ libstdc++-devel libnsl make net-tools \
+                smartmontools sysstat unzip java-1.8.0-openjdk-devel
             ;;
         ubuntu|debian)
             apt-get update
             apt-get install -y \
                 bc binutils elfutils libelf-dev build-essential \
-                ksh libaio1 libaio-dev unzip sysstat net-tools
+                ksh libaio1 libaio-dev unzip sysstat net-tools \
+                openjdk-8-jdk
             ;;
     esac
     
@@ -309,12 +316,23 @@ EOF
 
     chown $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/db_install.rsp
     
-    # Run installer as oracle user
+    # Fix for "no oraInstaller in java.library.path" on newer Linux
+    # Set proper library path for the installer's native libraries
+    INSTALLER_LIB_PATH="$ORACLE_BASE/database/install/.oui/lib/linux64"
+    
+    # Run installer as oracle user with proper environment
     echo "Running Oracle installer (silent mode)..."
-    sudo -u $ORACLE_USER $ORACLE_BASE/database/runInstaller -silent \
-        -responseFile $ORACLE_BASE/db_install.rsp \
-        -ignorePrereqFailure \
-        -waitforcompletion
+    sudo -u $ORACLE_USER -i bash -c "
+        export ORACLE_BASE=$ORACLE_BASE
+        export ORACLE_HOME=$ORACLE_HOME
+        export CV_ASSUME_DISTID=OEL7.9
+        export LD_LIBRARY_PATH=$INSTALLER_LIB_PATH:\$LD_LIBRARY_PATH
+        cd $ORACLE_BASE/database
+        ./runInstaller -silent \
+            -responseFile $ORACLE_BASE/db_install.rsp \
+            -ignorePrereqFailure \
+            -waitforcompletion
+    "
     
     # Run root scripts
     echo "Running root scripts..."
