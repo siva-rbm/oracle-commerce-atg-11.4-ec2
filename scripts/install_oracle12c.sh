@@ -307,8 +307,13 @@ oracle.install.db.OPER_GROUP=$DBA_GROUP
 oracle.install.db.BACKUPDBA_GROUP=$DBA_GROUP
 oracle.install.db.DGDBA_GROUP=$DBA_GROUP
 oracle.install.db.KMDBA_GROUP=$DBA_GROUP
-DECLINE_SECURITY_UPDATES=true
+oracle.install.db.OSRACDBA_GROUP=$DBA_GROUP
+oracle.install.db.rac.configurationType=
+oracle.install.db.CLUSTER_NODES=
+oracle.install.db.isRACOneInstall=false
+oracle.install.db.racOneServiceName=
 SECURITY_UPDATES_VIA_MYORACLESUPPORT=false
+DECLINE_SECURITY_UPDATES=true
 EOF
 
     chown $ORACLE_USER:$ORACLE_GROUP $ORACLE_BASE/db_install.rsp
