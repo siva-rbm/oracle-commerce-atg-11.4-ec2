@@ -13,7 +13,7 @@ set -euo pipefail
 # Configuration
 ##########################
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$SCRIPT_DIR"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 INSTALLER_ZIP="${PROJECT_ROOT}/oracle-db/LINUX.X64_193000_db_home.zip"
 
 # Use Oracle's expected default path (recommended)
